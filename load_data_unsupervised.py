@@ -384,6 +384,8 @@ else:
 
 #-----------------------with model check --------------------
 
+'''
+
 import os
 import pandas as pd
 import numpy as np
@@ -498,6 +500,162 @@ if user_input in ['yes', 'y']:
                 xticklabels=['Predicted Normal', 'Predicted Anomaly'],
                 yticklabels=['Actual Normal', 'Actual Anomaly'])
 
+    stats_text = (
+        f"Total: {total}    Correct: {right_total} ({right_percent:.2f}%)\n"
+        f"Wrong: {wrong_total} ({wrong_percent:.2f}%)\n"
+        f"Normal → Anomaly (FP): {fp}   Anomaly → Normal (FN): {fn}\n"
+        f"True Positives (TP): {tp}   True Negatives (TN): {tn}\n"
+        f"Accuracy: {accuracy * 100:.2f}%    F1 Score: {f1:.4f}"
+    )
+    plt.title("Confusion Matrix with Explanation", fontsize=14)
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.text(2.1, -0.6, stats_text, fontsize=10, va='top', ha='left', linespacing=1.5)
+    plt.tight_layout()
+    plt.savefig("confusion_matrix_plot_with_explanation.png")
+    plt.show()
+else:
+    print(Fore.CYAN + "🛑 Plot display skipped.")
+
+
+'''
+#-----------------------total code --------------------
+
+import os
+import pandas as pd
+import numpy as np
+import joblib
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, f1_score
+from colorama import Fore, Style, init
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Initialize colorama
+init(autoreset=True)
+
+# Feature list
+features = [
+    'Flow_Duration', 'Total_Fwd_Packets', 'Total_Backward_Packets',
+    'Fwd_Packet_Length_Max', 'Bwd_Packet_Length_Max',
+    'Flow_Bytes_s', 'Flow_Packets_s',
+    'Fwd_IAT_Mean', 'Bwd_IAT_Mean', 'Packet_Length_Variance',
+    'Average_Packet_Size'
+]
+
+# Filenames
+sample_file = 'sample.csv'
+labeled_file = 'classified_traffic_full.csv'
+model_file = 'rf_anomaly_model.pkl'
+
+# Step 1: Check if labeled data exists; if not, create it using Isolation Forest
+if not os.path.exists(labeled_file):
+    print(Fore.CYAN + "🔄 Labeled data not found. Creating labeled data using Isolation Forest...")
+
+    df_sample = pd.read_csv(sample_file)
+    df_sample.columns = df_sample.columns.str.strip().str.replace(' ', '_').str.replace('/', '_')
+
+    # Select features and clean
+    df_features = df_sample[features].replace([np.inf, -np.inf], np.nan).dropna()
+    idx_valid = df_features.index
+
+    # Train Isolation Forest on features
+    iso_forest = IsolationForest(contamination=0.05, random_state=42)
+    labels = iso_forest.fit_predict(df_features)
+
+    # Map labels: 1 (normal), -1 (anomaly) -> normal= 'normal', anomaly= 'anomaly'
+    label_map = {1: 'normal', -1: 'anomaly'}
+    df_sample.loc[idx_valid, 'class'] = pd.Series(labels, index=idx_valid).map(label_map)
+
+    # Save labeled data (including unlabeled rows without class)
+    df_sample.to_csv(labeled_file, index=False)
+    print(Fore.GREEN + f"✅ Labeled data saved to '{labeled_file}'")
+else:
+    print(Fore.GREEN + f"✅ Labeled data '{labeled_file}' found, skipping labeling step.")
+
+# Step 2: Train model if not exists
+if not os.path.exists(model_file):
+    print(Fore.CYAN + "🔄 Model not found. Training a new Random Forest model...")
+
+    df_labeled = pd.read_csv(labeled_file)
+    df_labeled.columns = df_labeled.columns.str.strip().str.replace(' ', '_').str.replace('/', '_')
+
+    # Filter rows where class is not null
+    df_labeled = df_labeled.dropna(subset=['class'])
+    df_labeled['class'] = df_labeled['class'].map({'normal': 0, 'anomaly': 1})
+
+    X_train = df_labeled[features].replace([np.inf, -np.inf], np.nan).dropna()
+    y_train = df_labeled.loc[X_train.index, 'class']
+
+    clf = RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')
+    clf.fit(X_train, y_train)
+
+    joblib.dump(clf, model_file)
+    print(Fore.GREEN + f"✅ Model trained and saved as '{model_file}'")
+else:
+    clf = joblib.load(model_file)
+    print(Fore.GREEN + f"✅ Model loaded from '{model_file}'")
+
+# Step 3: Predict on sample.csv
+df_test = pd.read_csv(sample_file)
+df_test.columns = df_test.columns.str.strip().str.replace(' ', '_').str.replace('/', '_')
+X_test = df_test[features].replace([np.inf, -np.inf], np.nan).dropna()
+
+y_pred = clf.predict(X_test)
+df_pred = df_test.loc[X_test.index].copy()
+df_pred.insert(0, 'lid', range(1, len(df_pred) + 1))
+df_pred['predicted_class'] = pd.Series(y_pred).map({0: 'normal', 1: 'anomaly'})
+df_pred.to_csv('test_output.csv', index=False)
+print(Fore.YELLOW + "✅ Predictions saved to 'test_output.csv'")
+
+# Step 4: Evaluate
+df_labeled = pd.read_csv(labeled_file)
+df_labeled.columns = df_labeled.columns.str.strip().str.replace(' ', '_').str.replace('/', '_')
+df_true = df_labeled[['lid', 'class']] if 'lid' in df_labeled.columns else df_labeled.copy()
+if 'lid' not in df_true.columns:
+    df_true = df_true.reset_index().rename(columns={'index': 'lid'})
+
+df_pred = df_pred[['lid', 'predicted_class']].dropna()
+df_true = df_true.dropna(subset=['class'])
+
+df_result = pd.merge(df_pred, df_true, on='lid', how='inner')
+
+df_result['true_class'] = df_result['class'].map({'normal': 0, 'anomaly': 1})
+df_result['predicted_class'] = df_result['predicted_class'].map({'normal': 0, 'anomaly': 1})
+
+df_result = df_result.dropna(subset=['true_class', 'predicted_class'])
+
+y_true = df_result['true_class'].astype(int)
+y_pred = df_result['predicted_class'].astype(int)
+
+accuracy = accuracy_score(y_true, y_pred)
+f1 = f1_score(y_true, y_pred)
+conf_matrix = confusion_matrix(y_true, y_pred)
+tn, fp, fn, tp = conf_matrix.ravel()
+
+total = tn + tp + fp + fn
+right_total = tn + tp
+wrong_total = fp + fn
+wrong_percent = (wrong_total / total) * 100
+right_percent = (right_total / total) * 100
+
+print(Fore.CYAN + f"\n🧾 Total samples processed for testing: {total}")
+print(Fore.GREEN + f"✅ Correct predictions: {right_total} ({right_percent:.2f}%)")
+print(Fore.RED + f"❌ Wrong predictions: {wrong_total} ({wrong_percent:.2f}%)")
+print(Fore.RED + f"   └─ Normal wrongly predicted as Anomaly (FP): {fp}")
+print(Fore.RED + f"   └─ Anomaly wrongly predicted as Normal (FN): {fn}")
+print(Fore.CYAN + f"\n🎯 Accuracy: {accuracy * 100:.2f}%")
+print(Fore.GREEN + f"F1 Score: {f1:.4f}")
+print(Fore.MAGENTA + "\n📋 Classification Report:\n" +
+      classification_report(y_true, y_pred, target_names=['normal', 'anomaly']))
+
+# Step 5: Show confusion matrix plot optionally
+user_input = input(Fore.YELLOW + "\n📈 Do you want to view the confusion matrix plot? (yes/no): ").strip().lower()
+if user_input in ['yes', 'y']:
+    plt.figure(figsize=(10, 7))
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues',
+                xticklabels=['Predicted Normal', 'Predicted Anomaly'],
+                yticklabels=['Actual Normal', 'Actual Anomaly'])
     stats_text = (
         f"Total: {total}    Correct: {right_total} ({right_percent:.2f}%)\n"
         f"Wrong: {wrong_total} ({wrong_percent:.2f}%)\n"
