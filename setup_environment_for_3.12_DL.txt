@@ -1,0 +1,41 @@
+
+install python 10
+python -m venv myenv_for_deepL
+
+myenv_for_deepL\Scripts\activate
+
+
+pip install tensorflow
+
+pip install pandas
+
+pip install tensorflow scikit-learn
+
+pip install colorama
+
+python load_data.py
+
+--------------------------------------
+install and Run :
+python -m venv myenv_for_deepL
+myenv_for_deepL\Scripts\activate
+pip install tensorflow pandas scikit-learn colorama joblib
+pip freeze > requirements.txt
+python load_data.py
+
+load : 
+python -m venv myenv_for_deepL
+myenv_for_deepL\Scripts\activate
+pip install -r requirements.txt
+
+-------------------------------------------
+
+Load From existing env : 
+
+CD C:\Users\ALIENWARE\OneDrive\Desktop\log_analysis\program2\
+myenv_for_deepL\Scripts\activate
+python load_data.py
+
+
+
+
